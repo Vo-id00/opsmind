@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>OpsMind</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<style>
+ body{font-family:system-ui,Segoe UI,Arial,sans-serif;background:#f4f6fb;margin:0;color:#1b2333}
+ header{background:#0b3d91;color:#fff;padding:16px 28px}
+ header h1{margin:0;font-size:22px} header p{margin:4px 0 0;opacity:.85;font-size:14px}
+ main{max-width:1000px;margin:20px auto;padding:0 16px}
+ .card{background:#fff;border-radius:10px;padding:16px 20px;margin-bottom:16px;box-shadow:0 1px 4px rgba(0,0,0,.08)}
+ h2{margin:0 0 10px;font-size:16px}
+ select,button{font-size:15px;padding:9px 14px;border-radius:6px;border:1px solid #b8c1d6}
+ button{background:#0b3d91;color:#fff;border:none;cursor:pointer} button.sec{background:#fff;color:#0b3d91;border:1px solid #0b3d91}
+ button:disabled{opacity:.5;cursor:wait}
+ .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:12px}
+ .agent{border:1px solid #e1e6f2;border-radius:8px;padding:10px 12px;font-size:14px}
+ .agent b{display:block;text-transform:capitalize;margin-bottom:4px;color:#0b3d91}
+ table{width:100%;border-collapse:collapse;font-size:14px} td,th{padding:8px;border-bottom:1px solid #e8ecf5;text-align:left}
+ .pill{padding:2px 9px;border-radius:12px;font-size:12px;color:#fff}
+ .low{background:#2e9e5b}.medium{background:#e0a100}.high{background:#d63b3b}
+ .st{font-weight:600}
+ .banner{padding:12px 16px;border-radius:8px;font-weight:600}
+ .resolved{background:#dff5e6;color:#166534}.awaiting_approval{background:#fff4d6;color:#8a5a00}.escalated{background:#fde2e2;color:#991b1b}
+ li{margin:4px 0;font-size:14px} .t{color:#6b7791;font-family:monospace}
+</style></head><body>
+<header><h1>OpsMind</h1><p>Agentic AI for intelligent IT incident response (running on Azure)</p></header>
+<main>
+ <div class="card"><h2>Incident</h2>
+  <select id="inc"></select> <button id="go" onclick="investigate()">Investigate</button>
+  <p id="desc" style="font-size:14px;color:#556"></p></div>
+ <div id="out"></div>
+</main>
+<script>
+let run=null, incidents=[];
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+async function init(){
+  incidents=await (await fetch('/api/incidents')).json();
+  document.getElementById('inc').innerHTML=incidents.map(i=>`<option value="${i.id}">[${i.severity}] ${esc(i.title)}</option>`).join('');
+}
+async function investigate(){
+  const b=document.getElementById('go'); b.disabled=true; b.textContent='Agents investigating...';
+  document.getElementById('out').innerHTML='<div class="card">Perception, reasoning, planning and governance agents are working. This takes 20-40 seconds...</div>';
+  try{
+    const r=await fetch('/api/investigate/'+document.getElementById('inc').value,{method:'POST'});
+    if(!r.ok) throw new Error(await r.text());
+    run=await r.json(); render();
+  }catch(e){document.getElementById('out').innerHTML='<div class="card escalated">Error: '+esc(e.message)+'</div>';}
+  b.disabled=false; b.textContent='Investigate';
+}
+async function decide(kind){
+  const r=await fetch(`/api/runs/${run.id}/${kind}`,{method:'POST'}); run=await r.json(); render();
+}
+function render(){
+  const f=Object.entries(run.findings).map(([k,v])=>`<div class="agent"><b>${esc(k)} agent</b>${esc(v)}</div>`).join('');
+  const rows=run.actions.map(a=>`<tr><td>${a.id}</td><td>${esc(a.type)}</td><td>${esc(a.target)}</td><td>${esc(a.reason)}</td>
+    <td><span class="pill ${a.risk}">${a.risk}</span></td><td class="st">${esc(a.status.replace('_',' '))}</td></tr>`).join('');
+  const msg={resolved:'Service recovered. Incident resolved.',awaiting_approval:'Waiting for human approval of high or medium risk actions.',escalated:'Escalated to a human engineer.'}[run.status]||run.status;
+  const pending=run.status==='awaiting_approval';
+  document.getElementById('out').innerHTML=`
+   <div class="card banner ${run.status}">${msg}</div>
+   <div class="card"><h2>Specialist agents (parallel investigation)</h2><div class="grid">${f}</div></div>
+   <div class="card"><h2>Probable root cause (${esc(run.rca.confidence)} confidence)</h2>
+     <p><b>${esc(run.rca.root_cause)}</b></p><ul>${(run.rca.evidence||[]).map(e=>`<li>${esc(e)}</li>`).join('')}</ul></div>
+   <div class="card"><h2>Remediation plan and governance</h2>
+     <table><tr><th>#</th><th>Action</th><th>Target</th><th>Reason</th><th>Risk</th><th>Status</th></tr>${rows}</table>
+     ${pending?'<p><button onclick="decide(\'approve\')">Approve actions</button> <button class="sec" onclick="decide(\'reject\')">Reject</button></p>':''}</div>
+   ${run.validation?`<div class="card"><h2>Validation</h2><p>${esc(run.validation.summary)}</p></div>`:''}
+   <div class="card"><h2>Audit trail</h2><ul>${run.audit.map(a=>`<li><span class="t">${a.t}</span> <b>${esc(a.actor)}</b>: ${esc(a.event)}</li>`).join('')}</ul></div>`;
+}
+init();
+</script></body></html>
